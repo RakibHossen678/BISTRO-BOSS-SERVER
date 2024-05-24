@@ -117,13 +117,18 @@ async function run() {
         admin = user?.role === "admin";
         console.log(admin);
       }
-      console.log(admin);
+      // console.log(admin);
       res.send({ admin });
     });
 
     //menu related api
     app.get("/menu", async (req, res) => {
       const result = await menuCollection.find().toArray();
+      res.send(result);
+    });
+    app.post("/menu",verifyToken,verifyAdmin, async (req, res) => {
+      const menuData=req.body
+      const result = await menuCollection.insertOne(menuData)
       res.send(result);
     });
     app.get("/review", async (req, res) => {
