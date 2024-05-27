@@ -4,6 +4,7 @@ const jwt = require("jsonwebtoken");
 const app = express();
 const cors = require("cors");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 
 app.use(cors());
@@ -28,6 +29,7 @@ async function run() {
     const userCollection = client.db("BISTROBOSSDB").collection("users");
     const reviewsCollection = client.db("BISTROBOSSDB").collection("reviews");
     const cartsCollection = client.db("BISTROBOSSDB").collection("carts");
+    const paymentCollection = client.db("BISTROBOSSDB").collection("payment");
 
     //jwt related api
 
@@ -67,7 +69,7 @@ async function run() {
 
     //user related api
 
-    app.get("/users", verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/users", verifyToken, async (req, res) => {
       // console.log()
       const result = await userCollection.find().toArray();
       res.send(result);
@@ -104,31 +106,65 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/users/admin/:email", verifyToken,verifyAdmin, async (req, res) => {
-      const email = req.params.email;
-      if (email !== req.decoded.email) {
-        return res.status(403).send({ message: "unauthorized" });
+    app.get(
+      "/users/admin/:email",
+      verifyToken,
+      
+      async (req, res) => {
+        const email = req.params.email;
+        if (email !== req.decoded.email) {
+          return res.status(403).send({ message: "unauthorized" });
+        }
+        const query = { email: email };
+        const user = await userCollection.findOne(query);
+        console.log(user);
+        let admin = false;
+        if (user) {
+          admin = user?.role === "admin";
+          console.log(admin);
+        }
+        // console.log(admin);
+        res.send({ admin });
       }
-      const query = { email: email };
-      const user = await userCollection.findOne(query);
-      console.log(user);
-      let admin = false;
-      if (user) {
-        admin = user?.role === "admin";
-        console.log(admin);
-      }
-      // console.log(admin);
-      res.send({ admin });
-    });
+    );
 
     //menu related api
     app.get("/menu", async (req, res) => {
       const result = await menuCollection.find().toArray();
       res.send(result);
     });
-    app.post("/menu",verifyToken,verifyAdmin, async (req, res) => {
-      const menuData=req.body
-      const result = await menuCollection.insertOne(menuData)
+    app.post("/menu", verifyToken, async (req, res) => {
+      const menuData = req.body;
+      const result = await menuCollection.insertOne(menuData);
+      res.send(result);
+    });
+    app.delete("/menu/:id", verifyToken, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.deleteOne(query);
+      res.send(result);
+    });
+    app.get("/menu/:id", async (req, res) => {
+      const id = req.params.id;
+      console.log(id);
+      const query = { _id: new ObjectId(id) };
+      const result = await menuCollection.findOne(query);
+      res.send(result);
+    });
+    app.patch("/menu/:id", async (req, res) => {
+      const item = req.body;
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const updatedDoc = {
+        $set: {
+          name: item.name,
+          category: item.category,
+          price: item.price,
+          recipe: item.recipe,
+          image: item.image,
+        },
+      };
+      const result = await menuCollection.updateOne(filter, updatedDoc);
       res.send(result);
     });
     app.get("/review", async (req, res) => {
@@ -154,6 +190,44 @@ async function run() {
       const result = await cartsCollection.deleteOne(query);
       res.send(result);
     });
+
+    //payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+
+    //payment
+
+    app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+      const query = {
+        _id: {
+          $in: payment.cartIds.map((id) => new ObjectId(id)),
+        },
+      };
+     
+      const deleteResult = await cartsCollection.deleteMany(query);
+      res.send({ deleteResult, paymentResult });
+    });
+
+    app.get('/payments/:email',verifyToken,async(req,res)=>{
+      const query={email:req.params.email}
+      if(req.params.email !==req.decoded.email){
+        return res.status(403).send({message:'forbidden access'})
+      }
+      const result=await paymentCollection.find(query).toArray()
+      res.send(result)
+    })
 
     // Send a ping to confirm a successful connection
     console.log(
